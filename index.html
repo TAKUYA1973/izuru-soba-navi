@@ -46,7 +46,43 @@ footer{padding:12px 18px 32px;color:#6e776f;font-size:11px;line-height:1.6}
 <h1>出流そばNAVI</h1>
 <p>出流そばは、どこも同じじゃない。<br>写真と味の特徴から、今日の一軒を。</p>
 </header>
+<div id="auto-update-status"
+     style="margin:16px;padding:14px;background:#edf5eb;
+     border:1px solid #c8dcc5;border-radius:14px;
+     font-size:13px;line-height:1.7;color:#315d42;">
 
+  <b>✓ 自動更新チェック</b><br>
+  <span id="update-message">確認中...</span><br>
+  <small id="update-date"></small>
+
+</div>
+
+<script>
+fetch('data/update-status.json?t=' + Date.now())
+  .then(response => response.json())
+  .then(data => {
+
+    const shops = data.shops || {};
+    const updates = Object.values(shops)
+      .filter(shop => shop && shop.updated);
+
+    if (updates.length > 0) {
+      document.getElementById('update-message').innerHTML =
+        '🆕 更新候補があります：' + updates.length + '店';
+    } else {
+      document.getElementById('update-message').innerHTML =
+        '現在、新しい更新候補はありません。';
+    }
+
+    document.getElementById('update-date').innerHTML =
+      '最終自動チェック：' +
+      (data.last_checked || '未実施');
+  })
+  .catch(() => {
+    document.getElementById('update-message').innerHTML =
+      '更新情報を取得できませんでした。';
+  });
+</script>
 <div class="notice"><b>8店舗の写真をアプリ内に内蔵しました。</b><br>外部サイトから画像を読み込まないので、これまでよりiPhoneで写真が表示されやすい構成です。</div>
 
 
