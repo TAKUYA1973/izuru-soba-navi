@@ -2,7 +2,6 @@ name: Weekly Izuru Soba Update Check
 
 on:
   schedule:
-    # 毎週月曜日 午前9時（日本時間）
     - cron: "0 0 * * 1"
   workflow_dispatch:
 
@@ -18,6 +17,7 @@ concurrency:
 jobs:
   update-and-deploy:
     runs-on: ubuntu-latest
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -46,80 +46,7 @@ jobs:
             git commit -m "chore: weekly Izuru Soba update check"
             git push
           fi
-      - name: Add update status to NAVI
-              - name: Add update status to NAVI
-        run: |
-          python - <<'PY'
-          import json
-          import re
-          from pathlib import Path
 
-          index = Path("index.html")
-          status_file = Path("data/update-status.json")
-
-          html = index.read_text(encoding="utf-8")
-
-          # 以前Actionsが追加した表示を全部削除
-          html = re.sub(
-              r'<!-- AUTO-UPDATE-STATUS:START -->.*?<!-- AUTO-UPDATE-STATUS:END -->',
-              '',
-              html,
-              flags=re.S
-          )
-
-          # 以前手動で追加した update-status.json 用スクリプトも全部削除
-          html = re.sub(
-              r'<script\b[^>]*>.*?update-status\.json.*?</script>\s*',
-              '',
-              html,
-              flags=re.S | re.I
-          )
-
-          if status_file.exists():
-              data = json.loads(status_file.read_text(encoding="utf-8"))
-          else:
-              data = {
-                  "last_checked": "未実施",
-                  "shops": {}
-              }
-
-          checked = data.get("last_checked") or "未実施"
-          shops = data.get("shops", {})
-
-          updated = [
-              info
-              for info in shops.values()
-              if info and info.get("updated")
-          ]
-
-          if updated:
-              box = f"""
-          <!-- AUTO-UPDATE-STATUS:START -->
-          <div style="margin:16px;padding:14px;background:#fff1ed;
-                      border:1px solid #e2a99c;border-radius:14px;
-                      font-size:13px;line-height:1.7;color:#6f352b;">
-            <b>🆕 更新候補があります：{len(updated)}店</b><br>
-            最終自動チェック：{checked}
-          </div>
-          <!-- AUTO-UPDATE-STATUS:END -->
-          """
-          else:
-              box = f"""
-          <!-- AUTO-UPDATE-STATUS:START -->
-          <div style="margin:16px;padding:14px;background:#edf5eb;
-                      border:1px solid #c8dcc5;border-radius:14px;
-                      font-size:13px;line-height:1.7;color:#315d42;">
-            <b>✓ 自動更新チェック</b><br>
-            現在、新しい更新候補はありません。<br>
-            最終自動チェック：{checked}
-          </div>
-          <!-- AUTO-UPDATE-STATUS:END -->
-          """
-
-          html = html.replace("</header>", "</header>" + box, 1)
-
-          index.write_text(html, encoding="utf-8")
-          PY
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
