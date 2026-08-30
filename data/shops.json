@@ -1,0 +1,54 @@
+{
+  "元祖手打そば いづるや": {
+    "slug": "izuruya",
+    "urls": [
+      "https://iduruya.online/",
+      "https://www.tochigi-kankou.or.jp/spot/izuruya"
+    ]
+  },
+  "手打そば いしやま": {
+    "slug": "ishiyama",
+    "urls": [
+      "https://isiyama.com/",
+      "https://www.tochigi-kankou.or.jp/spot/ishiyama"
+    ]
+  },
+  "そば処 さとや": {
+    "slug": "satoya",
+    "urls": [
+      "https://www.iduru-satoya.com/",
+      "https://www.tochigi-kankou.or.jp/spot/satoya"
+    ]
+  },
+  "民宿いづる": {
+    "slug": "minshuku-izuru",
+    "urls": [
+      "https://iduru-soba-tochigi.com/"
+    ]
+  },
+  "岩本屋": {
+    "slug": "iwamotoya",
+    "urls": [
+      "https://www.tochigi-kankou.or.jp/spot/iwamotoya"
+    ]
+  },
+  "福松": {
+    "slug": "fukumatsu",
+    "urls": [
+      "https://www.tochigi-kankou.or.jp/spot/fukumatsu"
+    ]
+  },
+  "福寿屋": {
+    "slug": "fukujuya",
+    "urls": [
+      "https://www.tochigi-kankou.or.jp/spot/fukujyuya",
+      "https://iduru-soba-tochigi.com/"
+    ]
+  },
+  "そば処 やまぶき": {
+    "slug": "yamabuki",
+    "urls": [
+      "https://www.tochigi-kankou.or.jp/spot/izuru-fureainomori"
+    ]
+  }
+}
