@@ -309,49 +309,7 @@ footer{padding:12px 18px 32px;color:#6e776f;font-size:11px;line-height:1.6}
 
 <footer>※家族用の試作版です。営業時間・メニュー・価格などは変更される場合があります。週次確認で新情報が見つかった店は、今後「🆕 更新あり」として反映できます。</footer>
 </div>
-<script>
-(async function () {
-  try {
-    const res = await fetch(
-      'data/update-status.json?ts=' + Date.now(),
-      { cache: 'no-store' }
-    );
 
-    if (!res.ok) return;
-
-    const data = await res.json();
-    const checked = data.last_checked || '未実施';
-    const updates = Object.values(data.shops || {});
-    const count = updates.filter(x => x && x.updated).length;
-
-    const box = document.createElement('div');
-
-    box.style.cssText =
-      'margin:16px;padding:14px;background:#edf5eb;' +
-      'border:1px solid #c8dcc5;border-radius:14px;' +
-      'font-size:13px;line-height:1.7;color:#315d42;';
-
-    if (count > 0) {
-      box.innerHTML =
-        '<b>🆕 更新候補があります：' + count + '店</b><br>' +
-        '最終自動チェック：' + checked;
-    } else {
-      box.innerHTML =
-        '<b>✓ 自動更新チェック</b><br>' +
-        '現在、新しい更新候補はありません。<br>' +
-        '最終自動チェック：' + checked;
-    }
-
-    const header = document.querySelector('header');
-
-    if (header) {
-      header.insertAdjacentElement('afterend', box);
-    }
-  } catch (e) {
-    console.log('update check error', e);
-  }
-})();
-</script>
  
 </body>
 </html>
