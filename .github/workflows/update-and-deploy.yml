@@ -47,6 +47,7 @@ jobs:
             git push
           fi
       - name: Add update status to NAVI
+              - name: Add update status to NAVI
         run: |
           python - <<'PY'
           import json
@@ -58,7 +59,7 @@ jobs:
 
           html = index.read_text(encoding="utf-8")
 
-          # 前回自動挿入した表示があれば削除
+          # 以前Actionsが追加した表示を全部削除
           html = re.sub(
               r'<!-- AUTO-UPDATE-STATUS:START -->.*?<!-- AUTO-UPDATE-STATUS:END -->',
               '',
@@ -66,46 +67,39 @@ jobs:
               flags=re.S
           )
 
+          # 以前手動で追加した update-status.json 用スクリプトも全部削除
+          html = re.sub(
+              r'<script\b[^>]*>.*?update-status\.json.*?</script>\s*',
+              '',
+              html,
+              flags=re.S | re.I
+          )
+
           if status_file.exists():
               data = json.loads(status_file.read_text(encoding="utf-8"))
           else:
-              data = {"last_checked": "未実施", "shops": {}}
+              data = {
+                  "last_checked": "未実施",
+                  "shops": {}
+              }
 
           checked = data.get("last_checked") or "未実施"
           shops = data.get("shops", {})
 
-          names = {
-              "izuruya": "元祖手打そば いづるや",
-              "ishiyama": "手打そば いしやま",
-              "satoya": "そば処 さとや",
-              "minshuku-izuru": "民宿いづる",
-              "iwamotoya": "岩本屋",
-              "fukumatsu": "福松",
-              "fukujuya": "福寿屋",
-              "yamabuki": "そば処 やまぶき"
-          }
-
           updated = [
-              (slug, info)
-              for slug, info in shops.items()
+              info
+              for info in shops.values()
               if info and info.get("updated")
           ]
 
           if updated:
-              details = "".join(
-                  f"<br>🆕 <b>{names.get(slug, slug)}</b>："
-                  f"{info.get('summary', '公式ページに変更を検出しました。')}"
-                  for slug, info in updated
-              )
-
               box = f"""
           <!-- AUTO-UPDATE-STATUS:START -->
           <div style="margin:16px;padding:14px;background:#fff1ed;
                       border:1px solid #e2a99c;border-radius:14px;
                       font-size:13px;line-height:1.7;color:#6f352b;">
-            <b>🆕 更新候補があります：{len(updated)}店</b>
-            {details}
-            <br><small>最終自動チェック：{checked}</small>
+            <b>🆕 更新候補があります：{len(updated)}店</b><br>
+            最終自動チェック：{checked}
           </div>
           <!-- AUTO-UPDATE-STATUS:END -->
           """
@@ -117,15 +111,12 @@ jobs:
                       font-size:13px;line-height:1.7;color:#315d42;">
             <b>✓ 自動更新チェック</b><br>
             現在、新しい更新候補はありません。<br>
-            <small>最終自動チェック：{checked}</small>
+            最終自動チェック：{checked}
           </div>
           <!-- AUTO-UPDATE-STATUS:END -->
           """
 
-          if "</header>" in html:
-              html = html.replace("</header>", "</header>" + box, 1)
-          else:
-              html = re.sub(r'(<body[^>]*>)', r'\1' + box, html, count=1)
+          html = html.replace("</header>", "</header>" + box, 1)
 
           index.write_text(html, encoding="utf-8")
           PY
