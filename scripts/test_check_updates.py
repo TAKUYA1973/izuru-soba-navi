@@ -45,7 +45,8 @@ def make_kankou_html(hours: str, related_spots: str) -> bytes:
     body = (
         f"{KANKOU_NAV} グルメ いづるや いづるや いづるや 北エリア グルメ そば・うどん 出流そば "
         f"創業50年の元祖手打ち蕎麦。 所在地 栃木県栃木市出流町141 TEL 0282-31-0638 "
-        f"営業時間 {hours} 定休日 毎週水曜日 専用駐車場 30台 公式WEB 公式ホームページ "
+        f"営業時間 {hours} 定休日 毎週水曜日 メニュー 盛りそば 天ぷらそば 価格 800円〜 "
+        f"専用駐車場 30台 公式WEB 公式ホームページ "
         f"21 同じカテゴリーのスポット {related_spots} {KANKOU_FOOTER}"
     )
     html = f"<html><head><title>t</title></head><body><p>{body}</p></body></html>"
@@ -107,14 +108,22 @@ class ExtractCoreContentTest(unittest.TestCase):
         # 「同じカテゴリーのスポット」のローテーションだけが違う場合、
         # 抽出後のコア部分は完全に一致し、ハッシュも一致しなければならない。
         self.assertEqual(core_a, core_b)
-        self.assertEqual(check_updates.digest(core_a), check_updates.digest(core_b))
+        self.assertEqual(
+            check_updates.digest(core_a, url), check_updates.digest(core_b, url)
+        )
 
         # 関連スポットの店名そのものはコア抽出後には含まれない。
         self.assertNotIn("いしやま", core_a)
         self.assertNotIn("岩本屋", core_b)
-        # 店舗固有の情報は保持されている。
+        # 店舗固有の情報(営業時間・定休日・メニュー・価格)は削られずに保持されている。
         self.assertIn("営業時間", core_a)
         self.assertIn("11:00", core_a)
+        self.assertIn("定休日", core_a)
+        self.assertIn("毎週水曜日", core_a)
+        self.assertIn("メニュー", core_a)
+        self.assertIn("盛りそば", core_a)
+        self.assertIn("価格", core_a)
+        self.assertIn("800円", core_a)
 
     def test_detects_real_change_in_shop_specific_info(self):
         url = "https://www.tochigi-kankou.or.jp/spot/izuruya"
@@ -130,13 +139,15 @@ class ExtractCoreContentTest(unittest.TestCase):
 
         self.assertNotEqual(core_before, core_after)
         self.assertNotEqual(
-            check_updates.digest(core_before), check_updates.digest(core_after)
+            check_updates.digest(core_before, url), check_updates.digest(core_after, url)
         )
 
-    def test_tag_order_shuffle_does_not_change_hash(self):
+    def test_tag_order_shuffle_does_not_change_hash_on_kankou_pages(self):
         # 実データで確認された事象: カテゴリータグ（例:「出流そば」等のバッジ）の
         # 表示順が読み込みごとに入れ替わることがある。店舗情報自体は同じでも
         # 語順だけが変わるケースでハッシュが変わらないことを確認する。
+        # (canonical_form は観光協会ページに限定して適用される)
+        url = "https://www.tochigi-kankou.or.jp/spot/satoya"
         text_a = (
             "グルメ さとや さとや さとや 北エリア グルメ そば・うどん ランチ "
             "とちぎ小江戸ブランド 栃木IC 出流・星野 出流そば 所在地 栃木県栃木市出流町179 "
@@ -149,7 +160,23 @@ class ExtractCoreContentTest(unittest.TestCase):
         )
 
         self.assertNotEqual(text_a, text_b)
-        self.assertEqual(check_updates.digest(text_a), check_updates.digest(text_b))
+        self.assertEqual(
+            check_updates.digest(text_a, url), check_updates.digest(text_b, url)
+        )
+
+    def test_word_reordering_on_non_kankou_site_is_not_masked(self):
+        # canonical_form を観光協会ページ以外にまで適用すると、単語の「対応関係」が
+        # 失われ、価格やメニュー名が入れ替わっただけの意味のある変更を見逃してしまう
+        # (例: もりそばとざるそばの値段が入れ替わったのに、同じ単語集合のため
+        # 「変更なし」とみなされてしまう)。店舗自身のサイトでは単語順の違いが
+        # そのままハッシュの違いとして検知されなければならない。
+        url = "https://iduruya.co.jp/menu/"
+        before = "メニュー もりそば 700円 ざるそば 800円 天ぷらそば 1200円"
+        after = "メニュー もりそば 800円 ざるそば 700円 天ぷらそば 1200円"
+
+        self.assertNotEqual(
+            check_updates.digest(before, url), check_updates.digest(after, url)
+        )
 
     def test_non_kankou_url_is_returned_unchanged(self):
         text = "元祖手打そば いづるや 同じカテゴリーのスポット (これは店の紹介文の一部)"

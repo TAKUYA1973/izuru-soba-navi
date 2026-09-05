@@ -46,12 +46,16 @@ def normalize_html(html: bytes | str) -> str:
     return text.strip()
 
 
+def is_tochigi_kankou_url(url: str) -> bool:
+    host = urlparse(url).hostname or ""
+    return host.endswith(TOCHIGI_KANKOU_HOST)
+
+
 def extract_core_content(text: str, url: str) -> str:
     """店舗と無関係な変動部分（関連スポット一覧・共通ナビ/フッター）を取り除き、
     所在地・営業時間・定休日・メニュー・価格など店舗固有の情報だけを比較対象にする。"""
 
-    host = urlparse(url).hostname or ""
-    if not host.endswith(TOCHIGI_KANKOU_HOST):
+    if not is_tochigi_kankou_url(url):
         return text
 
     start = text.find(TOCHIGI_KANKOU_CORE_START)
@@ -70,12 +74,19 @@ def extract_core_content(text: str, url: str) -> str:
 
 def canonical_form(text: str) -> str:
     """カテゴリータグ等、表示順が読み込みごとに入れ替わることがある単語列を
-    順序に依存せず比較できるよう、単語集合として正規化する。"""
+    順序に依存せず比較できるよう、単語集合として正規化する。
+
+    単語の「集合」でしか比較できなくなる（＝どの単語がどの単語と対応しているか
+    が失われる）ため、価格やメニュー名が入れ替わったような意味のある変更まで
+    見逃すおそれがある。そのため、実際に表示順の入れ替わりが確認されている
+    観光協会ページの店舗情報ブロックに限定して使用すること。
+    """
     return " ".join(sorted(text.split()))
 
 
-def digest(text: str) -> str:
-    return hashlib.sha256(canonical_form(text).encode("utf-8")).hexdigest()
+def digest(text: str, url: str) -> str:
+    hash_source = canonical_form(text) if is_tochigi_kankou_url(url) else text
+    return hashlib.sha256(hash_source.encode("utf-8")).hexdigest()
 
 
 def diff_summary(old: str, new: str) -> str:
@@ -143,7 +154,7 @@ def main():
                 if len(text) < 80:
                     raise ValueError("page text too short")
 
-                current_hash = digest(text)
+                current_hash = digest(text, url)
 
                 prev = old_sources.get(url, {})
 
