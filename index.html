@@ -100,12 +100,7 @@ fetch('data/update-status.json?t=' + Date.now())
       }
 
       if (info && info.updated) {
-        const summary =
-          info.summary ||
-          info.message ||
-          info.change ||
-          info.details ||
-          '公式ページに変更が見つかりました。';
+        const summary ='公式ページに変更が見つかりました。';
 
         const box = document.createElement('div');
         box.style.cssText =
