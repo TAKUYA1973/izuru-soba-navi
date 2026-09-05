@@ -110,6 +110,11 @@ _LABEL_SEP = r"\s*[:：]?\s*"
 _PRICE_RE = re.compile(r"[+＋]?\d[\d,]*\s*円")
 _MENU_HEADING_RE = re.compile(r"メニュー|お\s*品\s*書\s*き")
 
+# いづるやの実メニューページ(iduruya.co.jp/menu/)を実データで確認したところ、
+# 価格の無い季節限定品の案内文言「店内告知をご覧ください」がそのまま次の
+# 商品名に混入する実例があった。汎用的な案内文言なので取り除く。
+_MENU_FILLER_PHRASES = ["店内告知をご覧ください"]
+
 
 def _normalize_value(value: str) -> str:
     """表記揺れ（全角/半角、空白、改行）を吸収するための正規化。
@@ -160,6 +165,18 @@ def extract_menu_items(text: str) -> dict[str, str] | None:
     最初の商品ではナビゲーションや前置きの文章まで巻き込んでしまう。
     直前3語に絞ることでその混入を抑えるが、4語以上の商品名は末尾3語に
     切り詰められる場合がある(既知の制限)。
+
+    また実データ(いづるやの実メニューページ)で以下の2パターンの混入を
+    確認したため、直前3語を取り出す前に軽減している。
+    - 価格の無い案内文が句点「。」で終わり、その直後に次の商品名が続く
+      (例:「…ご賞味ください。 そばがき 950円」)場合、最後の句点より前は
+      捨てて句点より後ろだけを対象にする。
+    - 「店内告知をご覧ください」のような、価格の無い季節限定品の案内文言。
+
+    これでも「冷たいおそば もりそば」のように、価格の無い短い見出し語
+    (2〜4文字程度)が直前にそのまま連結される場合まではDOM構造が無いと
+    確実には除去できない(既知の制限。値そのものは安定しており、価格変更の
+    検知漏れ・誤検知は起きない)。
     """
 
     if not _MENU_HEADING_RE.search(text):
@@ -172,7 +189,13 @@ def extract_menu_items(text: str) -> dict[str, str] | None:
     items: dict[str, str] = {}
     prev_end = 0
     for m in matches:
-        gap_tokens = text[prev_end:m.start()].split()
+        gap = text[prev_end:m.start()]
+        if "。" in gap:
+            gap = gap.rsplit("。", 1)[1]
+        for phrase in _MENU_FILLER_PHRASES:
+            gap = gap.replace(phrase, " ")
+
+        gap_tokens = gap.split()
         name = _normalize_value(" ".join(gap_tokens[-3:]))
         price = _normalize_value(m.group(0))
         if name and price:
@@ -182,14 +205,35 @@ def extract_menu_items(text: str) -> dict[str, str] | None:
     return items
 
 
-def extract_structured_fields(text: str) -> dict:
+# 「出流ふれあいの森」のページ(そば処やまぶきが園内で営業)は、実データを
+# 確認したところ「営業時間 8:30~17:00 ※そば店「やまぶき」は…営業11:00~14:00」
+# のように、公園全体の営業時間とやまぶき自身の営業時間が1つの文字列に
+# 混在している。DOM構造が無いテキストからやまぶき固有の値だけを安全に
+# 切り出す方法が無いため、公園側の営業時間・定休日が変わっただけで
+# 「やまぶきの営業時間/定休日が変わった」と誤って表示してしまう恐れがある。
+# そのため、このURLに限り営業時間/定休日の構造化差分検知を無効化する
+# (ページ全体の更新検知自体はPR#1の仕組みのまま維持され、更新は
+# 従来通りの固定文言で表示される)。
+STRUCTURED_HOURS_CLOSED_EXCLUDED_URLS = {
+    "https://www.tochigi-kankou.or.jp/spot/izuru-fureainomori",
+}
+
+
+def extract_structured_fields(text: str, url: str | None = None) -> dict:
     """比較・表示用に、店舗固有の構造化データ(営業時間/定休日/メニューと価格)
     を抽出する。text には extract_core_content 適用後のテキストを渡すこと
     (観光協会ページの関連スポット一覧・共通ナビ/フッターは既に除外されている)。"""
 
+    if url in STRUCTURED_HOURS_CLOSED_EXCLUDED_URLS:
+        hours = None
+        closed = None
+    else:
+        hours = extract_labeled_field(text, "営業時間")
+        closed = extract_labeled_field(text, "定休日")
+
     return {
-        "hours": extract_labeled_field(text, "営業時間"),
-        "closed": extract_labeled_field(text, "定休日"),
+        "hours": hours,
+        "closed": closed,
         "menu": extract_menu_items(text),
     }
 
@@ -220,15 +264,26 @@ def diff_structured_fields(prev_fields: dict | None, new_fields: dict | None) ->
     prev_menu = prev_fields.get("menu")
     new_menu = new_fields.get("menu")
     if prev_menu is not None and new_menu is not None:
-        for name in new_menu:
-            if name not in prev_menu:
-                changes.append(f"メニュー：「{name}」が追加されました")
-        for name in prev_menu:
-            if name not in new_menu:
-                changes.append(f"メニュー：「{name}」が削除されました")
-        for name in new_menu:
-            if name in prev_menu and prev_menu[name] != new_menu[name]:
-                changes.append(f"価格：{name} {prev_menu[name]} → {new_menu[name]}")
+        # 一時的なHTML欠落やページ構造の変化により、価格の抽出件数が
+        # 大きく減っただけの場合、実際には削除されていない項目まで
+        # 「メニュー：〜が削除されました」と大量に誤検知してしまう。
+        # 半分以上が消えたように見える場合は、削除ではなく取得の乱れと
+        # みなし、そのメニュー比較(追加・削除・価格変更のすべて)を
+        # 今回に限りスキップする。
+        menu_extraction_looks_unreliable = (
+            len(prev_menu) > 0 and len(new_menu) < len(prev_menu) * 0.5
+        )
+
+        if not menu_extraction_looks_unreliable:
+            for name in new_menu:
+                if name not in prev_menu:
+                    changes.append(f"メニュー：「{name}」が追加されました")
+            for name in prev_menu:
+                if name not in new_menu:
+                    changes.append(f"メニュー：「{name}」が削除されました")
+            for name in new_menu:
+                if name in prev_menu and prev_menu[name] != new_menu[name]:
+                    changes.append(f"価格：{name} {prev_menu[name]} → {new_menu[name]}")
 
     return changes
 
@@ -300,7 +355,7 @@ def main():
                     raise ValueError("page text too short")
 
                 current_hash = digest(text, url)
-                fields = extract_structured_fields(text)
+                fields = extract_structured_fields(text, url)
 
                 prev = old_sources.get(url, {})
 

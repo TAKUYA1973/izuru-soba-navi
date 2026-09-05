@@ -258,6 +258,36 @@ class ExtractLabeledFieldTest(unittest.TestCase):
         self.assertEqual(menu["ざるそば"], "880円")
         self.assertEqual(menu["各種そば大盛り"], "+250円")
 
+    def test_menu_extraction_ignores_prose_ending_in_period_before_item(self):
+        # data/source-state.json で確認した iduruya.co.jp/menu/ の実例:
+        # 価格の無い案内文(句点で終わる)の直後に次の商品名が続くと、
+        # 直前3語の単純な切り出しでは案内文まで巻き込んでしまっていた。
+        text = (
+            "メニュー ごはん【小】栃木県産コシヒカリ 200円 "
+            "おそばを引き立てる名品の数々。 "
+            "山里の隠れ家で、大自然の恩恵とくつろぎのひとときをご賞味ください。 "
+            "そばがき 950円"
+        )
+        menu = check_updates.extract_menu_items(text)
+        self.assertEqual(menu["そばがき"], "950円")
+        self.assertNotIn("ご賞味ください", "".join(menu.keys()))
+
+    def test_menu_extraction_strips_known_filler_phrase(self):
+        # data/source-state.json で確認した実例:「店内告知をご覧ください」という
+        # 価格の無い季節限定品の案内文言が、次の商品名に混入していた。
+        # この文言自体は取り除かれるが、直前3語の範囲に他の価格無し商品名が
+        # 残る場合がある(既知の制限。価格の対応自体は正しく保たれる)。
+        text = (
+            "メニュー 舞茸の天婦羅【5品】 850円 "
+            "ふきのとうの天婦羅 店内告知をご覧ください "
+            "もりそば定食 1,450円"
+        )
+        menu = check_updates.extract_menu_items(text)
+        matching = [name for name in menu if name.endswith("もりそば定食")]
+        self.assertEqual(len(matching), 1, menu)
+        self.assertEqual(menu[matching[0]], "1,450円")
+        self.assertNotIn("店内告知をご覧ください", "".join(menu.keys()))
+
     def test_menu_returns_none_when_no_menu_heading_present(self):
         # メニュー/お品書きの見出し語が無いページでは、価格らしき数字があっても
         # 抽出を試みない(値を確実に抽出できない場合は変更と断定しない)
@@ -267,6 +297,29 @@ class ExtractLabeledFieldTest(unittest.TestCase):
     def test_menu_returns_empty_dict_when_heading_present_but_no_prices(self):
         text = "メニュー お知らせ お問い合わせ アクセス ブログ"
         self.assertEqual(check_updates.extract_menu_items(text), {})
+
+    def test_izuru_fureainomori_hours_and_closed_are_excluded(self):
+        # data/source-state.json で確認した実例:「出流ふれあいの森」ページは
+        # 公園全体の営業時間の説明文の中に、そば処やまぶき自身の営業時間が
+        # 埋め込まれている(例:「営業時間 8:30~17:00 ※そば店「やまぶき」は
+        # …営業11:00~14:00」)。公園側の営業時間が変わっただけで「やまぶきの
+        # 営業時間が変わった」と誤って報告するおそれがあるため、このURLに
+        # 限り営業時間・定休日の構造化差分検知自体を無効化している。
+        url = "https://www.tochigi-kankou.or.jp/spot/izuru-fureainomori"
+        text = (
+            "所在地 栃木県栃木市出流町417 営業時間 8:30~17:00 "
+            "※そば店「やまぶき」は土・日・祝日のみ営業11:00~14:00 "
+            "定休日 7月及び8月を除く月の毎週火曜日"
+        )
+        fields = check_updates.extract_structured_fields(text, url)
+        self.assertIsNone(fields["hours"])
+        self.assertIsNone(fields["closed"])
+
+        # 他のURL(通常の観光協会ページ)では従来通り抽出される
+        other_url = "https://www.tochigi-kankou.or.jp/spot/iwamotoya"
+        other_fields = check_updates.extract_structured_fields(text, other_url)
+        self.assertIsNotNone(other_fields["hours"])
+        self.assertIsNotNone(other_fields["closed"])
 
 
 class DiffStructuredFieldsTest(unittest.TestCase):
@@ -347,6 +400,25 @@ class DiffStructuredFieldsTest(unittest.TestCase):
         # 構造化データが丸ごと無い(None)ため、変更を断定しない。
         self.assertEqual(check_updates.diff_structured_fields(None, {"hours": "x"}), [])
         self.assertEqual(check_updates.diff_structured_fields({"hours": "x"}, None), [])
+
+    def test_mass_menu_dropout_is_not_reported_as_deletion(self):
+        # 一時的なHTML欠落やページ構造の変化で、価格の抽出件数が
+        # 大きく減った(半分未満になった)場合は、実際の削除ではなく
+        # 取得の乱れとみなし、削除・追加・価格変更のいずれも報告しない。
+        prev_menu = {f"品目{i}": f"{i}00円" for i in range(1, 11)}  # 10品目
+        new_menu = {"品目1": "100円", "品目2": "999円"}  # 2品目まで激減(価格も変わっている)
+        prev = {"hours": None, "closed": None, "menu": prev_menu}
+        new = {"hours": None, "closed": None, "menu": new_menu}
+        self.assertEqual(check_updates.diff_structured_fields(prev, new), [])
+
+    def test_small_menu_decrease_is_still_reported_as_deletion(self):
+        # 半分以上残っている通常の削除は、これまで通り検知する。
+        prev_menu = {f"品目{i}": f"{i}00円" for i in range(1, 11)}  # 10品目
+        new_menu = {k: v for k, v in prev_menu.items() if k != "品目1"}  # 1品目だけ削除
+        prev = {"hours": None, "closed": None, "menu": prev_menu}
+        new = {"hours": None, "closed": None, "menu": new_menu}
+        changes = check_updates.diff_structured_fields(prev, new)
+        self.assertEqual(changes, ["メニュー：「品目1」が削除されました"])
 
     def test_price_swap_between_two_items_is_detected(self):
         # 商品Aと商品Bの価格が入れ替わった場合、両方が「価格変更」として検知される
