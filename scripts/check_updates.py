@@ -6,6 +6,7 @@ import re
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -22,8 +23,18 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; IzuruSobaNAVI/1.0; family-use update checker)"
 }
 
+# 栃木市観光協会サイトの各スポットページは、末尾に「同じカテゴリーのスポット」という
+# おすすめ店舗の一覧（アクセスの度に内容が変わる）と、全ページ共通のフッターが続く。
+# 店舗自身の情報とは無関係にここが変化するだけで更新検知が誤発火するため、比較対象から除外する。
+TOCHIGI_KANKOU_HOST = "tochigi-kankou.or.jp"
+TOCHIGI_KANKOU_CORE_START = "スポット トップページ"
+TOCHIGI_KANKOU_CORE_END = "同じカテゴリーのスポット"
 
-def normalize_html(html: str) -> str:
+
+def normalize_html(html: bytes | str) -> str:
+    # r.content（バイト列）をそのまま渡すことで、BeautifulSoup 自身に
+    # 文字コードを判定させる。requests の r.text は charset ヘッダが
+    # 無い/誤っているサイトで ISO-8859-1 に誤判定し文字化けすることがあるため。
     soup = BeautifulSoup(html, "html.parser")
 
     for tag in soup(["script", "style", "noscript", "svg", "iframe"]):
@@ -35,8 +46,38 @@ def normalize_html(html: str) -> str:
     return text.strip()
 
 
+def extract_core_content(text: str, url: str) -> str:
+    """店舗と無関係な変動部分（関連スポット一覧・共通ナビ/フッター）を取り除き、
+    所在地・営業時間・定休日・メニュー・価格など店舗固有の情報だけを比較対象にする。"""
+
+    host = urlparse(url).hostname or ""
+    if not host.endswith(TOCHIGI_KANKOU_HOST):
+        return text
+
+    start = text.find(TOCHIGI_KANKOU_CORE_START)
+    start = start + len(TOCHIGI_KANKOU_CORE_START) if start != -1 else 0
+
+    end = text.find(TOCHIGI_KANKOU_CORE_END)
+
+    if end != -1 and end > start:
+        return text[start:end].strip()
+
+    if start > 0:
+        return text[start:].strip()
+
+    return text
+
+
+def canonical_form(text: str) -> str:
+    """カテゴリータグ等、表示順が読み込みごとに入れ替わることがある単語列を
+    順序に依存せず比較できるよう、単語集合として正規化する。"""
+    return " ".join(sorted(text.split()))
+
+
 def digest(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical_form(text).encode("utf-8")).hexdigest()
+
+
 def diff_summary(old: str, new: str) -> str:
     if not old:
         return "監視を開始しました。"
@@ -96,7 +137,8 @@ def main():
 
                 r.raise_for_status()
 
-                text = normalize_html(r.text)
+                text = normalize_html(r.content)
+                text = extract_core_content(text, url)
 
                 if len(text) < 80:
                     raise ValueError("page text too short")
