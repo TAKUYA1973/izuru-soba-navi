@@ -37,64 +37,31 @@ def normalize_html(html: str) -> str:
 
 def digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
 def diff_summary(old: str, new: str) -> str:
     if not old:
         return "監視を開始しました。"
 
-    old_parts = set(
-        x.strip()
-        for x in re.split(r"(?<=[。！？])|\s{2,}", old)
-        if x.strip()
-    )
+    keywords = {
+        "営業時間": ["営業時間", "営業", "開店", "閉店"],
+        "定休日": ["定休日", "休業日", "休み"],
+        "メニュー": ["メニュー", "そば", "蕎麦"],
+        "価格・料金": ["価格", "料金", "円", "税込", "瓶ビール"],
+    }
 
-    new_parts = [
-        x.strip()
-        for x in re.split(r"(?<=[。！？])|\s{2,}", new)
-        if x.strip()
-    ]
+    changed_items = []
 
-    additions = [
-        x for x in new_parts
-        if x not in old_parts and len(x) >= 8
-    ]
+    for label, words in keywords.items():
+        old_hits = [w for w in words if w in old]
+        new_hits = [w for w in words if w in new]
 
-    keywords = (
-        "営業時間",
-        "定休日",
-        "休業",
-        "臨時",
-        "そば",
-        "蕎麦",
-        "メニュー",
-        "円",
-        "価格",
-        "寒晒",
-        "新そば",
-        "ビール",
-        "イベント",
-    )
+        if old_hits != new_hits:
+            changed_items.append(label)
 
-    ranked = sorted(
-        additions,
-        key=lambda x: (
-            not any(k in x for k in keywords),
-            len(x)
-        )
-    )
+    if changed_items:
+        return "・".join(changed_items) + "に変更候補があります。"
 
-    if ranked:
-        return (
-            "公式ページの表示内容が変わりました。"
-            "追加・変更候補: "
-            + ranked[0][:160]
-        )
+    return "公式ページの掲載内容が更新されました。"
 
-    return (
-        "公式ページの表示内容が変わりました。"
-        "営業時間・メニュー等をご確認ください。"
-    )
 
 
 def main():
