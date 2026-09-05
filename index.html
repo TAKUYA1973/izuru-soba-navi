@@ -100,7 +100,21 @@ fetch('data/update-status.json?t=' + Date.now())
       }
 
       if (info && info.updated) {
-        const summary ='公式ページに変更が見つかりました。';
+        // changes: check_updates.py が安全に抽出できた具体的な変更内容
+        // (営業時間・定休日・メニュー・価格)の行のリスト。抽出できたものが
+        // 無い場合は、従来通りの固定の案内文にフォールバックする。
+        const changeLines = Array.isArray(info.changes)
+          ? info.changes.filter(line => typeof line === 'string' && line.trim())
+          : [];
+
+        const escapeHtml = (s) => String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
+
+        const detailHtml = changeLines.length > 0
+          ? changeLines.map(line => escapeHtml(line)).join('<br>')
+          : '公式ページに変更が見つかりました。';
 
         const box = document.createElement('div');
         box.style.cssText =
@@ -110,7 +124,7 @@ fetch('data/update-status.json?t=' + Date.now())
 
         box.innerHTML =
           '<b>🆕 更新あり</b><br>' +
-          String(summary) +
+          detailHtml +
           '<br><small>確認日：' +
           (info.checked_at || info.updated_at || data.last_checked || '') +
           '</small>';

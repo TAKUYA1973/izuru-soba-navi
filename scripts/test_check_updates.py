@@ -184,6 +184,261 @@ class ExtractCoreContentTest(unittest.TestCase):
         self.assertEqual(result, text)
 
 
+class ExtractLabeledFieldTest(unittest.TestCase):
+    """営業時間・定休日・メニュー/価格の抽出関数を、実際にキャッシュされていた
+    公式ページのテキスト構造に基づいて検証する。"""
+
+    def test_extracts_hours_and_closed_from_shop_owned_site(self):
+        # data/source-state.json で確認した iduruya.co.jp の実際の並び
+        text = (
+            "住所 〒328-0206 栃木県栃木市出流町141 TEL 0282-31-0638（代表） "
+            "FAX 0282-31-1280 E-MAIL iduruya@cc9.ne.jp "
+            "営業時間 11:00 ~ 17:00最終受付 定休日 毎週水曜日/毎月第3火曜日/元日 "
+            "Instagram Facebook Contact Copyright"
+        )
+        self.assertEqual(
+            check_updates.extract_labeled_field(text, "営業時間"),
+            "11:00 ~ 17:00最終受付",
+        )
+        self.assertEqual(
+            check_updates.extract_labeled_field(text, "定休日"),
+            "毎週水曜日/毎月第3火曜日/元日",
+        )
+
+    def test_extracts_hours_and_closed_from_kankou_page_and_strips_trailing_spot_id(self):
+        # data/source-state.json で確認した tochigi-kankou.or.jp/spot/iwamotoya の実際の並び
+        text = (
+            "所在地 栃木県栃木市出流町248 TEL 090-4595-2949 "
+            "営業時間 11:00 ～ 17:00 定休日 金曜日 21"
+        )
+        self.assertEqual(
+            check_updates.extract_labeled_field(text, "営業時間"), "11:00 ~ 17:00"
+        )
+        # 末尾の内部スポットID "21" が定休日の値に混入しない
+        self.assertEqual(
+            check_updates.extract_labeled_field(text, "定休日"), "金曜日"
+        )
+
+    def test_extracts_with_fullwidth_colon_label_separator(self):
+        # data/source-state.json で確認した iduru-satoya.com の実際の並び
+        text = "そば処 さとや 住所 ：栃木市出流町179 電話 ：0282(31)0919 営業時間 ：11：00～ 定休日 ：火曜日 （その他お休みになる場合があります） 大型バス駐車場ございます"
+        self.assertEqual(check_updates.extract_labeled_field(text, "営業時間"), "11:00~")
+        self.assertEqual(
+            check_updates.extract_labeled_field(text, "定休日"),
+            "火曜日 (その他お休みになる場合があります)",
+        )
+
+    def test_returns_none_when_label_not_present(self):
+        text = "そば切り いしやま TEL 055-263-5381 メニュー お知らせ お問い合わせ"
+        self.assertIsNone(check_updates.extract_labeled_field(text, "営業時間"))
+        self.assertIsNone(check_updates.extract_labeled_field(text, "定休日"))
+
+    def test_whitespace_and_width_variants_alone_do_not_change_extracted_value(self):
+        # 表記揺れ（全角/半角コロン、改行、余分な空白）だけの違いは
+        # 正規化により同一の値になる。
+        text_a = "営業時間 11:00～18:00 定休日 火曜日"
+        text_b = "営業時間　１１：００〜１８：００\n定休日　火曜日"
+        self.assertEqual(
+            check_updates.extract_labeled_field(text_a, "営業時間"),
+            check_updates.extract_labeled_field(text_b, "営業時間"),
+        )
+
+    def test_extracts_menu_items_from_real_menu_page_structure(self):
+        # data/source-state.json で確認した iduruya.co.jp/menu/ の実際の並び(抜粋)
+        text = (
+            "お 品 書 き 地元産の玄そばを使用しています。 おそば おそばのお供 "
+            "いづるや名物のおそばです。 名代盆ざるそば 五合盛 2〜3人前 2,500円 "
+            "八合盛 3〜4人前 4,000円 冷たいおそば もりそば 780円 ざるそば 880円 "
+            "各種そば大盛り +250円"
+        )
+        menu = check_updates.extract_menu_items(text)
+        self.assertIsNotNone(menu)
+        # "〜"は表記揺れ正規化により"~"に統一される
+        self.assertEqual(menu["八合盛 3~4人前"], "4,000円")
+        self.assertEqual(menu["ざるそば"], "880円")
+        self.assertEqual(menu["各種そば大盛り"], "+250円")
+
+    def test_menu_extraction_ignores_prose_ending_in_period_before_item(self):
+        # data/source-state.json で確認した iduruya.co.jp/menu/ の実例:
+        # 価格の無い案内文(句点で終わる)の直後に次の商品名が続くと、
+        # 直前3語の単純な切り出しでは案内文まで巻き込んでしまっていた。
+        text = (
+            "メニュー ごはん【小】栃木県産コシヒカリ 200円 "
+            "おそばを引き立てる名品の数々。 "
+            "山里の隠れ家で、大自然の恩恵とくつろぎのひとときをご賞味ください。 "
+            "そばがき 950円"
+        )
+        menu = check_updates.extract_menu_items(text)
+        self.assertEqual(menu["そばがき"], "950円")
+        self.assertNotIn("ご賞味ください", "".join(menu.keys()))
+
+    def test_menu_extraction_strips_known_filler_phrase(self):
+        # data/source-state.json で確認した実例:「店内告知をご覧ください」という
+        # 価格の無い季節限定品の案内文言が、次の商品名に混入していた。
+        # この文言自体は取り除かれるが、直前3語の範囲に他の価格無し商品名が
+        # 残る場合がある(既知の制限。価格の対応自体は正しく保たれる)。
+        text = (
+            "メニュー 舞茸の天婦羅【5品】 850円 "
+            "ふきのとうの天婦羅 店内告知をご覧ください "
+            "もりそば定食 1,450円"
+        )
+        menu = check_updates.extract_menu_items(text)
+        matching = [name for name in menu if name.endswith("もりそば定食")]
+        self.assertEqual(len(matching), 1, menu)
+        self.assertEqual(menu[matching[0]], "1,450円")
+        self.assertNotIn("店内告知をご覧ください", "".join(menu.keys()))
+
+    def test_menu_returns_none_when_no_menu_heading_present(self):
+        # メニュー/お品書きの見出し語が無いページでは、価格らしき数字があっても
+        # 抽出を試みない(値を確実に抽出できない場合は変更と断定しない)
+        text = "四季の郷 そば処さとや お知らせ ・2026年3月2日 3月13日まで休業"
+        self.assertIsNone(check_updates.extract_menu_items(text))
+
+    def test_menu_returns_empty_dict_when_heading_present_but_no_prices(self):
+        text = "メニュー お知らせ お問い合わせ アクセス ブログ"
+        self.assertEqual(check_updates.extract_menu_items(text), {})
+
+    def test_izuru_fureainomori_hours_and_closed_are_excluded(self):
+        # data/source-state.json で確認した実例:「出流ふれあいの森」ページは
+        # 公園全体の営業時間の説明文の中に、そば処やまぶき自身の営業時間が
+        # 埋め込まれている(例:「営業時間 8:30~17:00 ※そば店「やまぶき」は
+        # …営業11:00~14:00」)。公園側の営業時間が変わっただけで「やまぶきの
+        # 営業時間が変わった」と誤って報告するおそれがあるため、このURLに
+        # 限り営業時間・定休日の構造化差分検知自体を無効化している。
+        url = "https://www.tochigi-kankou.or.jp/spot/izuru-fureainomori"
+        text = (
+            "所在地 栃木県栃木市出流町417 営業時間 8:30~17:00 "
+            "※そば店「やまぶき」は土・日・祝日のみ営業11:00~14:00 "
+            "定休日 7月及び8月を除く月の毎週火曜日"
+        )
+        fields = check_updates.extract_structured_fields(text, url)
+        self.assertIsNone(fields["hours"])
+        self.assertIsNone(fields["closed"])
+
+        # 他のURL(通常の観光協会ページ)では従来通り抽出される
+        other_url = "https://www.tochigi-kankou.or.jp/spot/iwamotoya"
+        other_fields = check_updates.extract_structured_fields(text, other_url)
+        self.assertIsNotNone(other_fields["hours"])
+        self.assertIsNotNone(other_fields["closed"])
+
+
+class DiffStructuredFieldsTest(unittest.TestCase):
+    """data/update-status.json に保存する「何が変わったか」の生成ロジックを検証する。
+    ユーザー指定の11個の回帰テストに対応する。"""
+
+    def test_detects_hours_change(self):
+        prev = {"hours": "11:00〜17:00", "closed": "水曜日", "menu": None}
+        new = {"hours": "11:00〜16:30", "closed": "水曜日", "menu": None}
+        changes = check_updates.diff_structured_fields(prev, new)
+        self.assertEqual(changes, ["営業時間：11:00〜17:00 → 11:00〜16:30"])
+
+    def test_detects_closed_days_change(self):
+        prev = {"hours": "11:00〜17:00", "closed": "水曜日", "menu": None}
+        new = {"hours": "11:00〜17:00", "closed": "水曜日・木曜日", "menu": None}
+        changes = check_updates.diff_structured_fields(prev, new)
+        self.assertEqual(changes, ["定休日：水曜日 → 水曜日・木曜日"])
+
+    def test_detects_menu_item_added(self):
+        prev = {"hours": None, "closed": None, "menu": {"もりそば": "780円"}}
+        new = {
+            "hours": None,
+            "closed": None,
+            "menu": {"もりそば": "780円", "鴨南蛮そば": "1200円"},
+        }
+        changes = check_updates.diff_structured_fields(prev, new)
+        self.assertEqual(changes, ["メニュー：「鴨南蛮そば」が追加されました"])
+
+    def test_detects_menu_item_removed(self):
+        prev = {
+            "hours": None,
+            "closed": None,
+            "menu": {"もりそば": "780円", "鴨南蛮そば": "1200円"},
+        }
+        new = {"hours": None, "closed": None, "menu": {"もりそば": "780円"}}
+        changes = check_updates.diff_structured_fields(prev, new)
+        self.assertEqual(changes, ["メニュー：「鴨南蛮そば」が削除されました"])
+
+    def test_detects_price_change(self):
+        prev = {"hours": None, "closed": None, "menu": {"もりそば": "780円"}}
+        new = {"hours": None, "closed": None, "menu": {"もりそば": "850円"}}
+        changes = check_updates.diff_structured_fields(prev, new)
+        self.assertEqual(changes, ["価格：もりそば 780円 → 850円"])
+
+    def test_detects_multiple_simultaneous_changes(self):
+        prev = {
+            "hours": "11:00〜17:00",
+            "closed": "水曜日",
+            "menu": {"もりそば": "780円"},
+        }
+        new = {
+            "hours": "11:00〜16:30",
+            "closed": "水曜日・木曜日",
+            "menu": {"もりそば": "850円"},
+        }
+        changes = check_updates.diff_structured_fields(prev, new)
+        self.assertEqual(len(changes), 3)
+        self.assertIn("営業時間：11:00〜17:00 → 11:00〜16:30", changes)
+        self.assertIn("定休日：水曜日 → 水曜日・木曜日", changes)
+        self.assertIn("価格：もりそば 780円 → 850円", changes)
+
+    def test_whitespace_only_change_is_ignored(self):
+        # extract_labeled_field の正規化により、両者は既に同じ値になっているはず
+        # だが、diff_structured_fields 自体も同一値であれば変更を出さないことを
+        # 直接確認する。
+        prev = {"hours": "11:00〜17:00", "closed": "水曜日", "menu": None}
+        new = {"hours": "11:00〜17:00", "closed": "水曜日", "menu": None}
+        self.assertEqual(check_updates.diff_structured_fields(prev, new), [])
+
+    def test_extraction_failure_on_either_side_is_not_treated_as_change(self):
+        # 片方でも抽出できていない(None)フィールドは、変更と断定しない
+        prev = {"hours": None, "closed": "水曜日", "menu": None}
+        new = {"hours": "11:00〜17:00", "closed": "水曜日", "menu": None}
+        self.assertEqual(check_updates.diff_structured_fields(prev, new), [])
+
+    def test_missing_structured_data_on_either_side_yields_no_changes(self):
+        # 旧形式のデータ(fieldsキーが無い)との比較や取得失敗直後は
+        # 構造化データが丸ごと無い(None)ため、変更を断定しない。
+        self.assertEqual(check_updates.diff_structured_fields(None, {"hours": "x"}), [])
+        self.assertEqual(check_updates.diff_structured_fields({"hours": "x"}, None), [])
+
+    def test_mass_menu_dropout_is_not_reported_as_deletion(self):
+        # 一時的なHTML欠落やページ構造の変化で、価格の抽出件数が
+        # 大きく減った(半分未満になった)場合は、実際の削除ではなく
+        # 取得の乱れとみなし、削除・追加・価格変更のいずれも報告しない。
+        prev_menu = {f"品目{i}": f"{i}00円" for i in range(1, 11)}  # 10品目
+        new_menu = {"品目1": "100円", "品目2": "999円"}  # 2品目まで激減(価格も変わっている)
+        prev = {"hours": None, "closed": None, "menu": prev_menu}
+        new = {"hours": None, "closed": None, "menu": new_menu}
+        self.assertEqual(check_updates.diff_structured_fields(prev, new), [])
+
+    def test_small_menu_decrease_is_still_reported_as_deletion(self):
+        # 半分以上残っている通常の削除は、これまで通り検知する。
+        prev_menu = {f"品目{i}": f"{i}00円" for i in range(1, 11)}  # 10品目
+        new_menu = {k: v for k, v in prev_menu.items() if k != "品目1"}  # 1品目だけ削除
+        prev = {"hours": None, "closed": None, "menu": prev_menu}
+        new = {"hours": None, "closed": None, "menu": new_menu}
+        changes = check_updates.diff_structured_fields(prev, new)
+        self.assertEqual(changes, ["メニュー：「品目1」が削除されました"])
+
+    def test_price_swap_between_two_items_is_detected(self):
+        # 商品Aと商品Bの価格が入れ替わった場合、両方が「価格変更」として検知される
+        # (canonical_form の単語集合比較のような、対応関係を失う比較では検知漏れになる)
+        prev = {
+            "hours": None,
+            "closed": None,
+            "menu": {"もりそば": "700円", "ざるそば": "800円"},
+        }
+        new = {
+            "hours": None,
+            "closed": None,
+            "menu": {"もりそば": "800円", "ざるそば": "700円"},
+        }
+        changes = check_updates.diff_structured_fields(prev, new)
+        self.assertEqual(len(changes), 2)
+        self.assertIn("価格：もりそば 700円 → 800円", changes)
+        self.assertIn("価格：ざるそば 800円 → 700円", changes)
+
+
 class MainEndToEndTest(unittest.TestCase):
     """8店舗全ての URL をモックし、main() を通しで実行して検証する。"""
 
@@ -228,17 +483,38 @@ class MainEndToEndTest(unittest.TestCase):
             urls.update(meta["urls"])
         return urls
 
-    def _fake_get_factory(self, related_spots: str, hours_overrides=None):
+    def _fake_get_factory(
+        self,
+        related_spots: str,
+        hours_overrides=None,
+        closed_overrides=None,
+        menu_overrides=None,
+        fail_urls=None,
+    ):
         hours_overrides = hours_overrides or {}
+        closed_overrides = closed_overrides or {}
+        menu_overrides = menu_overrides or {}
+        fail_urls = fail_urls or set()
 
         def fake_get(url, headers=None, timeout=None):
+            if url in fail_urls:
+                raise check_updates.requests.exceptions.ConnectTimeout(
+                    f"simulated timeout for {url}"
+                )
+
             if "tochigi-kankou.or.jp" in url:
                 hours = hours_overrides.get(url, "11:00 ～ 18:00")
                 return FakeResponse(make_kankou_html(hours, related_spots))
+
             # 店舗自身のサイト等、観光協会以外のページ用の簡易HTML
+            # (先頭に「ダミー品」を挟み、直後の実際の商品名が直前語の
+            #  混入なしにクリーンに抽出されるようにしている)
+            hours = hours_overrides.get(url, "10:00〜18:00")
+            closed = closed_overrides.get(url, "月曜日")
+            menu = menu_overrides.get(url, "盛りそば 800円 天ぷらそば 1200円")
             body = (
-                f"店舗情報ページ {url} 営業時間 10:00〜18:00 定休日 月曜日 "
-                "メニュー 盛りそば 800円 天ぷらそば 1200円 所在地 栃木県栃木市出流町 "
+                f"店舗情報ページ {url} 営業時間 {hours} 定休日 {closed} "
+                f"メニュー ダミー品 100円 {menu} 所在地 栃木県栃木市出流町 "
                 "電話番号 0282-00-0000 駐車場あり 家族連れ歓迎の手打ちそば店です。"
             )
             html = f"<html><body><p>{body}</p></body></html>".encode("utf-8")
@@ -260,6 +536,12 @@ class MainEndToEndTest(unittest.TestCase):
             (self.data_dir / "source-state.json").read_text(encoding="utf-8")
         )
         self.assertEqual(set(state["sources"].keys()), self._all_urls())
+
+        # 初回実行でも、比較用の構造化データ(fields)自体はベースラインとして
+        # 保存される。ただし「更新あり」にはならない(下のアサーションで確認)。
+        kankou_izuruya = state["sources"]["https://www.tochigi-kankou.or.jp/spot/izuruya"]
+        self.assertIn("fields", kankou_izuruya)
+        self.assertEqual(kankou_izuruya["fields"]["hours"], "11:00 ~ 18:00")
 
         status = json.loads(
             (self.data_dir / "update-status.json").read_text(encoding="utf-8")
@@ -293,6 +575,116 @@ class MainEndToEndTest(unittest.TestCase):
             {},
             "関連スポット一覧の入れ替わりだけで「更新あり」と誤検知している",
         )
+
+    def test_fetch_failure_preserves_previous_fields_and_status(self):
+        # 1回目: ベースライン確立(全URL成功)
+        with mock.patch.object(
+            check_updates.requests,
+            "get",
+            side_effect=self._fake_get_factory("いしやま 福松"),
+        ):
+            check_updates.main()
+
+        state_after_first = json.loads(
+            (self.data_dir / "source-state.json").read_text(encoding="utf-8")
+        )
+        izuruya_root = "https://iduruya.co.jp/"
+        prev_fields = state_after_first["sources"][izuruya_root]["fields"]
+        prev_hash = state_after_first["sources"][izuruya_root]["hash"]
+
+        # 2回目: いづるやのURLの1つが一時的に取得失敗する
+        with mock.patch.object(
+            check_updates.requests,
+            "get",
+            side_effect=self._fake_get_factory(
+                "岩本屋 新喜庵", fail_urls={izuruya_root}
+            ),
+        ):
+            check_updates.main()
+
+        state_after_failure = json.loads(
+            (self.data_dir / "source-state.json").read_text(encoding="utf-8")
+        )
+        # 取得失敗時は、以前の正常値(hash/fields)がそのまま保持される
+        self.assertEqual(
+            state_after_failure["sources"][izuruya_root]["fields"], prev_fields
+        )
+        self.assertEqual(
+            state_after_failure["sources"][izuruya_root]["hash"], prev_hash
+        )
+
+        status = json.loads(
+            (self.data_dir / "update-status.json").read_text(encoding="utf-8")
+        )
+        # 一時的な取得失敗が「メニュー削除」等の変更として報告されない
+        if "izuruya" in status["shops"]:
+            for change in status["shops"]["izuruya"]["changes"]:
+                self.assertNotIn("削除", change)
+
+    def test_hours_and_price_change_detected_end_to_end(self):
+        url = "https://iduruya.co.jp/"
+        with mock.patch.object(
+            check_updates.requests,
+            "get",
+            side_effect=self._fake_get_factory("いしやま 福松"),
+        ):
+            check_updates.main()
+
+        with mock.patch.object(
+            check_updates.requests,
+            "get",
+            side_effect=self._fake_get_factory(
+                "岩本屋 新喜庵",
+                hours_overrides={url: "11:00〜16:30"},
+                menu_overrides={url: "盛りそば 850円 天ぷらそば 1200円"},
+            ),
+        ):
+            check_updates.main()
+
+        status = json.loads(
+            (self.data_dir / "update-status.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("izuruya", status["shops"])
+        changes = status["shops"]["izuruya"]["changes"]
+        self.assertTrue(
+            any(c.startswith("営業時間：") for c in changes),
+            changes,
+        )
+        self.assertTrue(
+            any("もりそば" not in c and "盛りそば" in c and "→" in c for c in changes)
+            or any("価格：盛りそば" in c for c in changes),
+            changes,
+        )
+
+    def test_price_swap_between_two_products_detected_end_to_end(self):
+        url = "https://iduruya.co.jp/"
+        with mock.patch.object(
+            check_updates.requests,
+            "get",
+            side_effect=self._fake_get_factory(
+                "いしやま 福松",
+                menu_overrides={url: "盛りそば 700円 ざるそば 800円"},
+            ),
+        ):
+            check_updates.main()
+
+        with mock.patch.object(
+            check_updates.requests,
+            "get",
+            side_effect=self._fake_get_factory(
+                "岩本屋 新喜庵",
+                menu_overrides={url: "盛りそば 800円 ざるそば 700円"},
+            ),
+        ):
+            check_updates.main()
+
+        status = json.loads(
+            (self.data_dir / "update-status.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("izuruya", status["shops"])
+        changes = status["shops"]["izuruya"]["changes"]
+        self.assertIn("価格：盛りそば 700円 → 800円", changes)
+        self.assertIn("価格：ざるそば 800円 → 700円", changes)
 
     def test_real_shop_change_is_still_detected(self):
         with mock.patch.object(
