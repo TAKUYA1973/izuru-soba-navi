@@ -1,40 +1,40 @@
 {
-  "last_checked": "2026-09-05 15:24",
+  "last_checked": "2026-09-05 19:13",
   "shops": {
     "izuruya": {
       "updated": true,
-      "checked_at": "2026-09-05 15:24",
-      "summary": "公式ページの掲載内容が更新されました。",
+      "checked_at": "2026-09-05 19:13",
+      "summary": "価格・料金に変更候補があります。",
       "source_url": "https://www.tochigi-kankou.or.jp/spot/izuruya"
     },
     "ishiyama": {
       "updated": true,
-      "checked_at": "2026-09-05 15:24",
-      "summary": "価格・料金に変更候補があります。",
+      "checked_at": "2026-09-05 19:13",
+      "summary": "公式ページの掲載内容が更新されました。",
       "source_url": "https://www.tochigi-kankou.or.jp/spot/ishiyama"
     },
     "satoya": {
       "updated": true,
-      "checked_at": "2026-09-05 15:24",
-      "summary": "公式ページの掲載内容が更新されました。",
+      "checked_at": "2026-09-05 19:13",
+      "summary": "価格・料金に変更候補があります。",
       "source_url": "https://www.tochigi-kankou.or.jp/spot/satoya"
     },
     "iwamotoya": {
       "updated": true,
-      "checked_at": "2026-09-05 15:24",
-      "summary": "公式ページの掲載内容が更新されました。",
+      "checked_at": "2026-09-05 19:13",
+      "summary": "価格・料金に変更候補があります。",
       "source_url": "https://www.tochigi-kankou.or.jp/spot/iwamotoya"
     },
     "fukumatsu": {
       "updated": true,
-      "checked_at": "2026-09-05 15:24",
-      "summary": "メニュー・価格・料金に変更候補があります。",
+      "checked_at": "2026-09-05 19:13",
+      "summary": "価格・料金に変更候補があります。",
       "source_url": "https://www.tochigi-kankou.or.jp/spot/fukumatsu"
     },
     "fukujuya": {
       "updated": true,
-      "checked_at": "2026-09-05 15:24",
-      "summary": "メニュー・価格・料金に変更候補があります。",
+      "checked_at": "2026-09-05 19:13",
+      "summary": "メニューに変更候補があります。",
       "source_url": "https://www.tochigi-kankou.or.jp/spot/fukujyuya"
     }
   }
