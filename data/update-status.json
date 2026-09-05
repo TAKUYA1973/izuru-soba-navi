@@ -1,17 +1,41 @@
 {
-  "last_checked": "2026-09-05 14:48",
+  "last_checked": "2026-09-05 15:24",
   "shops": {
     "izuruya": {
       "updated": true,
-      "checked_at": "2026-09-05 14:48",
-      "summary": "公式ページの表示内容が変わりました。追加・変更候補: 栃木市の歴史 運営情報 栃木市観光協会について お問い合わせ 会員様へのお知らせ 個人情報保護方針 サイトポリシー 関連リンク バナー広告について 市民サポーター募集 蔵座敷の貸し出し サイトマップ メニューを閉じる スポット トップページ グルメ いづるや いづるや いづるや 北エリア グルメ そば・うどん 栃木IC",
+      "checked_at": "2026-09-05 15:24",
+      "summary": "公式ページの掲載内容が更新されました。",
       "source_url": "https://www.tochigi-kankou.or.jp/spot/izuruya"
     },
     "ishiyama": {
       "updated": true,
-      "checked_at": "2026-09-05 14:48",
-      "summary": "公式ページの表示内容が変わりました。追加・変更候補: 定休日 木曜日（月１回連休あり） 専用駐車場 40台 アクセス方法 東北自動車道 栃木I.Cから車で25分 公式WEB 公式ホームページ 21 同じカテゴリーのスポット そば処円仁庵 浪崎 農村レストラン「桔梗」（つがの里ふるさとセンター内） 手打ちそば処 太郎庵ふく田 稲安食道 岩本屋 仙波そば小林 福寿屋 好古壱番",
+      "checked_at": "2026-09-05 15:24",
+      "summary": "価格・料金に変更候補があります。",
       "source_url": "https://www.tochigi-kankou.or.jp/spot/ishiyama"
+    },
+    "satoya": {
+      "updated": true,
+      "checked_at": "2026-09-05 15:24",
+      "summary": "公式ページの掲載内容が更新されました。",
+      "source_url": "https://www.tochigi-kankou.or.jp/spot/satoya"
+    },
+    "iwamotoya": {
+      "updated": true,
+      "checked_at": "2026-09-05 15:24",
+      "summary": "公式ページの掲載内容が更新されました。",
+      "source_url": "https://www.tochigi-kankou.or.jp/spot/iwamotoya"
+    },
+    "fukumatsu": {
+      "updated": true,
+      "checked_at": "2026-09-05 15:24",
+      "summary": "メニュー・価格・料金に変更候補があります。",
+      "source_url": "https://www.tochigi-kankou.or.jp/spot/fukumatsu"
+    },
+    "fukujuya": {
+      "updated": true,
+      "checked_at": "2026-09-05 15:24",
+      "summary": "メニュー・価格・料金に変更候補があります。",
+      "source_url": "https://www.tochigi-kankou.or.jp/spot/fukujyuya"
     }
   }
 }
