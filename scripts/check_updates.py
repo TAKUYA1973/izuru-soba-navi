@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import sys
+import unicodedata
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
@@ -89,6 +90,149 @@ def digest(text: str, url: str) -> str:
     return hashlib.sha256(hash_source.encode("utf-8")).hexdigest()
 
 
+# 営業時間・定休日の値を切り出す際、次にこのいずれかの語が現れたところで
+# 値の切り出しを止める。各公式URLの実際のキャッシュ済みテキスト
+# (data/source-state.json) を確認し、そこに実在するラベル・見出し語から
+# 組み立てている(推測だけで作ったものではない)。
+STOP_LABELS = [
+    "定休日", "営業時間", "専用駐車場", "アクセス方法", "公式WEB",
+    "所在地", "住所", "TEL", "FAX", "電話", "E-MAIL",
+    "メニュー", "価格", "料金",
+    "大型バス駐車場", "同じカテゴリーのスポット",
+    "最寄駅より", "アレルギー物質について",
+    "Instagram", "Facebook", "Contact", "Copyright",
+    "PAGE TOP", "ホーム", "トップへ戻る", "トップページ",
+    "配送/支払い条件", "サイトマップ", "プライバシーポリシー",
+    "地図を印刷", "URLをコピー", "ログアウト",
+]
+
+_LABEL_SEP = r"\s*[:：]?\s*"
+_PRICE_RE = re.compile(r"[+＋]?\d[\d,]*\s*円")
+_MENU_HEADING_RE = re.compile(r"メニュー|お\s*品\s*書\s*き")
+
+
+def _normalize_value(value: str) -> str:
+    """表記揺れ（全角/半角、空白、改行）を吸収するための正規化。
+    これを経ることで、表記が変わっただけの差分を実質的な変更として
+    検知しないようにする。"""
+    # NFKC では「〜」(波ダッシュ U+301C) は「~」(全角チルダ U+FF5E)に
+    # 正規化されない。見た目がほぼ同じで、時間表記(11:00〜18:00等)で
+    # サイトによって使い分けが揺れるため、先に統一しておく。
+    value = value.replace("〜", "~").replace("～", "~")
+    value = unicodedata.normalize("NFKC", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return value.strip(" 　:：・／/,-")
+
+
+def extract_labeled_field(text: str, label: str) -> str | None:
+    """text の中から「<label> <値>」の形になっている値を取り出す。
+    label が見つからない場合や、値が空になる場合は None を返し、
+    「確実に抽出できない場合は変更と断定しない」の方針に従う。"""
+
+    match = re.search(re.escape(label) + _LABEL_SEP, text)
+    if not match:
+        return None
+
+    start = match.end()
+    end = len(text)
+    for stop in STOP_LABELS:
+        if stop == label:
+            continue
+        idx = text.find(stop, start)
+        if idx != -1 and idx < end:
+            end = idx
+
+    value = _normalize_value(text[start:end])
+    # 観光協会ページ末尾に付く内部スポットID（例:「金曜日 21」の"21"）を除去する。
+    value = re.sub(r"\s+\d+$", "", value).strip()
+    return value or None
+
+
+def extract_menu_items(text: str) -> dict[str, str] | None:
+    """text からメニュー名と価格の対応を抽出する。
+
+    「メニュー」「お品書き」のような見出し語が一切見つからないページでは
+    そもそも試みず None を返す(＝未実施。抽出できないものを無理に埋めない)。
+    見出し語はあるが価格(◯◯円)が1件も見つからない場合は空の辞書を返す。
+
+    価格の直前3語を商品名とみなす。ページ全体を1つの空白区切り文字列として
+    扱っているため、直前の価格からこの価格までの間の語をそのまま商品名にすると、
+    最初の商品ではナビゲーションや前置きの文章まで巻き込んでしまう。
+    直前3語に絞ることでその混入を抑えるが、4語以上の商品名は末尾3語に
+    切り詰められる場合がある(既知の制限)。
+    """
+
+    if not _MENU_HEADING_RE.search(text):
+        return None
+
+    matches = list(_PRICE_RE.finditer(text))
+    if not matches:
+        return {}
+
+    items: dict[str, str] = {}
+    prev_end = 0
+    for m in matches:
+        gap_tokens = text[prev_end:m.start()].split()
+        name = _normalize_value(" ".join(gap_tokens[-3:]))
+        price = _normalize_value(m.group(0))
+        if name and price:
+            items[name] = price
+        prev_end = m.end()
+
+    return items
+
+
+def extract_structured_fields(text: str) -> dict:
+    """比較・表示用に、店舗固有の構造化データ(営業時間/定休日/メニューと価格)
+    を抽出する。text には extract_core_content 適用後のテキストを渡すこと
+    (観光協会ページの関連スポット一覧・共通ナビ/フッターは既に除外されている)。"""
+
+    return {
+        "hours": extract_labeled_field(text, "営業時間"),
+        "closed": extract_labeled_field(text, "定休日"),
+        "menu": extract_menu_items(text),
+    }
+
+
+def diff_structured_fields(prev_fields: dict | None, new_fields: dict | None) -> list[str]:
+    """構造化データ同士を比較し、画面表示用の「何が変わったか」の行を作る。
+
+    どちらかの抽出結果が丸ごと無い(=取得失敗直後や旧形式のデータで
+    まだ構造化データが無い)場合や、個々のフィールドが片方でも None の
+    場合は、そのフィールドについて変更を断定せずスキップする。
+    """
+
+    if not prev_fields or not new_fields:
+        return []
+
+    changes: list[str] = []
+
+    prev_hours = prev_fields.get("hours")
+    new_hours = new_fields.get("hours")
+    if prev_hours is not None and new_hours is not None and prev_hours != new_hours:
+        changes.append(f"営業時間：{prev_hours} → {new_hours}")
+
+    prev_closed = prev_fields.get("closed")
+    new_closed = new_fields.get("closed")
+    if prev_closed is not None and new_closed is not None and prev_closed != new_closed:
+        changes.append(f"定休日：{prev_closed} → {new_closed}")
+
+    prev_menu = prev_fields.get("menu")
+    new_menu = new_fields.get("menu")
+    if prev_menu is not None and new_menu is not None:
+        for name in new_menu:
+            if name not in prev_menu:
+                changes.append(f"メニュー：「{name}」が追加されました")
+        for name in prev_menu:
+            if name not in new_menu:
+                changes.append(f"メニュー：「{name}」が削除されました")
+        for name in new_menu:
+            if name in prev_menu and prev_menu[name] != new_menu[name]:
+                changes.append(f"価格：{name} {prev_menu[name]} → {new_menu[name]}")
+
+    return changes
+
+
 def diff_summary(old: str, new: str) -> str:
     if not old:
         return "監視を開始しました。"
@@ -137,6 +281,7 @@ def main():
     for shop, meta in cfg.items():
         slug = meta["slug"]
         best_update = None
+        shop_changes: list[str] = []
 
         for url in meta["urls"]:
             try:
@@ -155,12 +300,14 @@ def main():
                     raise ValueError("page text too short")
 
                 current_hash = digest(text, url)
+                fields = extract_structured_fields(text)
 
                 prev = old_sources.get(url, {})
 
                 new_sources[url] = {
                     "hash": current_hash,
                     "text": text,
+                    "fields": fields,
                     "checked_at": now,
                 }
 
@@ -169,6 +316,9 @@ def main():
                     and prev.get("hash")
                     and prev["hash"] != current_hash
                 ):
+                    shop_changes.extend(
+                        diff_structured_fields(prev.get("fields"), fields)
+                    )
                     best_update = {
                         "updated": True,
                         "checked_at": now,
@@ -189,6 +339,7 @@ def main():
                 )
 
         if best_update:
+            best_update["changes"] = shop_changes
             shop_updates[slug] = best_update
 
     STATE.write_text(
