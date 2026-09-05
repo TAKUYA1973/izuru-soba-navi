@@ -61,10 +61,73 @@ footer{padding:12px 18px 32px;color:#6e776f;font-size:11px;line-height:1.6}
 fetch('data/update-status.json?t=' + Date.now())
   .then(response => response.json())
   .then(data => {
-
     const shops = data.shops || {};
     const updates = Object.values(shops)
       .filter(shop => shop && shop.updated);
+
+    const shopAliases = {
+      "元祖手打そば いづるや":["izuruya","iduruya","いづるや","元祖手打そば いづるや"],
+      "手打そば いしやま":["ishiyama","いしやま","手打そば いしやま"],
+      "そば処 さとや":["satoya","さとや","そば処 さとや"],
+      "民宿いづる":["minshuku-izuru","minshuku_izuru","民宿いづる"],
+      "岩本屋":["iwamotoya","岩本屋"],
+      "福松":["fukumatsu","福松"],
+      "福寿屋":["fukujuya","福寿屋"],
+      "そば処 やまぶき":["yamabuki","やまぶき","そば処 やまぶき"]
+    };
+
+    document.querySelectorAll('.card').forEach(card => {
+      const h2 = card.querySelector('h2');
+      if (!h2) return;
+
+      const name = h2.textContent.trim();
+      const aliases = shopAliases[name] || [];
+      let info = null;
+
+      for (const key of aliases) {
+        if (shops[key]) {
+          info = shops[key];
+          break;
+        }
+      }
+
+      if (!info) {
+        info = Object.values(shops).find(item => {
+          if (!item || typeof item !== 'object') return false;
+          const n = item.name || item.shop || item.shop_name || '';
+          return n && (n === name || aliases.includes(n));
+        });
+      }
+
+      if (info && info.updated) {
+        const summary =
+          info.summary ||
+          info.message ||
+          info.change ||
+          info.details ||
+          '公式ページに変更が見つかりました。';
+
+        const box = document.createElement('div');
+        box.style.cssText =
+          'margin:10px 0 0;padding:10px 12px;border-radius:12px;' +
+          'background:#fff1ed;border:1px solid #e2a99c;' +
+          'color:#6f352b;font-size:12px;line-height:1.6;';
+
+        box.innerHTML =
+          '<b>🆕 更新あり</b><br>' +
+          String(summary) +
+          '<br><small>確認日：' +
+          (info.checked_at || info.updated_at || data.last_checked || '') +
+          '</small>';
+
+        const head = card.querySelector('.head');
+        if (head) {
+          head.insertAdjacentElement('afterend', box);
+        } else {
+          card.prepend(box);
+        }
+      }
+    });
 
     if (updates.length > 0) {
       document.getElementById('update-message').innerHTML =
